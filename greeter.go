@@ -98,7 +98,7 @@ func (g *greeter) verifyProtoSockType(conn net.Conn, buf []byte) error {
 		return ErrProtoBad
 	}
 
-	if buf[11] != Pull {
+	if buf[11] != Pull && buf[11] != Push {
 		return ErrProtoSockType
 	}
 

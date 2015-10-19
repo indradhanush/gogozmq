@@ -28,3 +28,9 @@ func (m *message) send(w io.Writer) (int, error) {
 	}
 	return w.Write(envelope)
 }
+
+func (m *message) recv(r io.Reader) ([]byte, error) {
+	msg := make([]byte, 255)
+	n, err := r.Read(msg)
+	return msg[:n], err
+}
