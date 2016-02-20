@@ -20,6 +20,7 @@ type Channeler struct {
 	RecvChan     <-chan []byte
 	sendDoneChan chan bool
 	recvDoneChan chan bool
+	exitChan     chan bool
 }
 
 func newChanneler(sockType byte, endpoints, subscribe string) (*Channeler, error) {
@@ -43,14 +44,14 @@ func newChanneler(sockType byte, endpoints, subscribe string) (*Channeler, error
 	case Pull:
 		addrParts := strings.Split(endpoints, "://")
 		if len(addrParts) != 2 {
-			return nil, fmt.Errorf("malformed address")
+			return c, fmt.Errorf("malformed address")
 		}
 
 		c.listener, err = net.Listen(addrParts[0], addrParts[1])
 		if err != nil {
 			return c, err
 		}
-		go c.recvMessages(recvChan)
+		go c.serve()
 	case Push:
 		c.conn, err = NewPushConn(endpoints)
 		if err != nil {
@@ -75,6 +76,8 @@ func (c *Channeler) Destroy() {
 	close(c.SendChan)
 	<-c.sendDoneChan
 	c.conn.Close()
+	fmt.Println("invoked destroy", c)
+	c.listener.Close()
 }
 
 func (c *Channeler) sendMessages(sendChan <-chan []byte) {
@@ -95,17 +98,30 @@ func (c *Channeler) sendMessages(sendChan <-chan []byte) {
 	c.sendDoneChan <- true
 }
 
-func (c *Channeler) recvMessages(recvChan chan<- []byte) {
-	zmtpMessageIncoming := &message{}
-	conn, err := c.listener.Accept()
-	if err != nil {
-		panic(err)
-	}
+func (c *Channeler) serve() {
+	for {
+		select {
+		case <-c.exitChan:
+			c.listener.Close()
+			return
+		}
 
+		conn, err := c.listener.Accept()
+		if err != nil {
+			fmt.Println("error in accepting connection")
+			return
+		}
+		recvChan := make(chan []byte)
+		go c.recvMessages(conn, recvChan)
+	}
+}
+
+func (c *Channeler) recvMessages(conn net.Conn, recvChan chan<- []byte) {
+	zmtpMessageIncoming := &message{}
 	zmtpGreetOutgoing := &greeter{
 		sockType: c.sockType,
 	}
-	err = zmtpGreetOutgoing.greet(conn)
+	err := zmtpGreetOutgoing.greet(conn)
 	if err != nil {
 		fmt.Println("I panicked now")
 		panic(err)
@@ -118,7 +134,11 @@ func (c *Channeler) recvMessages(recvChan chan<- []byte) {
 
 	zmtpMessageIncoming.msg = append(zmtpMessageIncoming.msg, frame)
 	for _, msg := range zmtpMessageIncoming.msg {
-		recvChan <- msg
+		if msg != nil {
+			recvChan <- msg
+			fmt.Println("received messages done: blocking here")
+		}
 	}
 	c.recvDoneChan <- true
+
 }
